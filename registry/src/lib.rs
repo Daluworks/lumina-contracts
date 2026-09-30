@@ -1,4 +1,4 @@
-﻿// Copyright (c) Lumina contributors
+// Copyright (c) Lumina contributors
 // SPDX-License-Identifier: MIT
 #![no_std]
 // Soroban's `#[contracttype]`, `#[contracterror]`, `#[contractimpl]` and
@@ -265,6 +265,7 @@ pub enum RegistryError {
     /// believes is staked, so a transfer that depends on that balance cannot
     /// proceed safely.
     ContractBalanceInsufficient = 39,
+    Paused = 40,
 }
 
 // ─── Storage shapes ────────────────────────────────────────────────────────
@@ -554,6 +555,8 @@ pub enum ProposalAction {
     ConfigureMinimumStake(i128),
     /// Withdraw from the treasury.
     WithdrawFromTreasury(i128),
+    /// Set the paused state of the registry (governance only).
+    SetPaused(bool),
 }
 
 /// Fixed-window registration counter for one owner.
@@ -640,6 +643,8 @@ pub enum DataKey {
     ProposalCount,
     /// Proposal — the full proposal record.
     ProposalData(u32),
+    /// bool — governance‑controlled pause flag. When true, write entrypoints reject.
+    Paused,
 
     // ── Registry ────────────────────────────────────────────────────────────
     /// u32 — live registrations (deactivated included, deregistered excluded).
@@ -1743,6 +1748,10 @@ impl LuminaRegistry {
         categories: Vec<Category>,
     ) -> Result<(), RegistryError> {
         owner.require_auth();
+        // Pause guard: reject writes when paused.
+        if env.storage().instance().get(&DataKey::Paused).unwrap_or(false) {
+            return Err(RegistryError::Paused);
+        }
 
         if env
             .storage()
@@ -1974,6 +1983,10 @@ impl LuminaRegistry {
         categories: Vec<Category>,
     ) -> Result<(), RegistryError> {
         owner.require_auth();
+        // Pause guard: reject writes when paused.
+        if env.storage().instance().get(&DataKey::Paused).unwrap_or(false) {
+            return Err(RegistryError::Paused);
+        }
 
         let entry: ContractEntry = env
             .storage()
@@ -2287,6 +2300,10 @@ impl LuminaRegistry {
         amount: i128,
     ) -> Result<(), RegistryError> {
         owner.require_auth();
+        // Pause guard: reject writes when paused.
+        if env.storage().instance().get(&DataKey::Paused).unwrap_or(false) {
+            return Err(RegistryError::Paused);
+        }
 
         Self::validate_positive_amount(amount)?;
 
@@ -3780,7 +3797,11 @@ impl LuminaRegistry {
                     .set(&DataKey::AllowlistEnabled, enabled);
                 env.events()
                     .publish((Symbol::new(env, "allowlist_mode_changed"),), (*enabled,));
-            }
+            },
+            ProposalAction::SetPaused(paused) => {
+                env.storage().instance().set(&DataKey::Paused, &paused);
+                env.events().publish((Symbol::new(env, "paused_set"),), (paused,));
+            },
             ProposalAction::SetAllowlisted(owner, allowed) => {
                 env.storage()
                     .persistent()
